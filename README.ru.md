@@ -65,6 +65,8 @@ Compose публикует настраиваемый порт:
 - `AWG_CONFIG_FILE` (по умолчанию `/config/amnezia.conf`)
 - `WG_QUICK_USERSPACE_IMPLEMENTATION` (по умолчанию `amneziawg-go`)
 - `LOG_LEVEL` (по умолчанию `info`)
+- `WATCHDOG_INTERVAL` (по умолчанию `30`, интервал проверки AWG в секундах)
+- `WATCHDOG_STALE_THRESHOLD` (по умолчанию `180`, перезапуск туннеля при устаревшем handshake)
 - `PROXY_LISTEN_HOST` (по умолчанию `0.0.0.0`)
 - `PROXY_PORT` (по умолчанию `1080`)
 - `PROXY_USER`, `PROXY_PASSWORD` (опциональная авторизация, должны быть заданы вместе)
@@ -152,6 +154,11 @@ docker exec awg-proxy nslookup google.com
 
 - Порт прокси занят
   - Переопределите host/container порт через `PROXY_PORT`.
+
+- Прокси перестает работать после сна ноутбука или смены сети/локации
+  - Держите `PersistentKeepalive = 25` в секции `Peer` AWG-конфига.
+  - В текущем образе включен watchdog AWG: он проверяет `latest-handshakes` и перезапускает туннель, если handshake устарел.
+  - При необходимости настройте `WATCHDOG_INTERVAL` и `WATCHDOG_STALE_THRESHOLD` через compose.
 
 - В контейнере все еще `nameserver 127.0.0.11`
   - Дождитесь завершения запуска AWG (`docker compose logs --tail=120 awg-proxy`).

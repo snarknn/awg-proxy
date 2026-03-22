@@ -7,6 +7,8 @@ WG_QUICK_USERSPACE_IMPLEMENTATION="${WG_QUICK_USERSPACE_IMPLEMENTATION:-amneziaw
 LOG_LEVEL="${LOG_LEVEL:-info}"
 PROXY_LISTEN_HOST="${PROXY_LISTEN_HOST:-0.0.0.0}"
 PROXY_PORT="${PROXY_PORT:-1080}"
+WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-30}"
+WATCHDOG_STALE_THRESHOLD="${WATCHDOG_STALE_THRESHOLD:-180}"
 PROXY_USER="${PROXY_USER:-}"
 PROXY_PASSWORD="${PROXY_PASSWORD:-}"
 MICROSOCKS_BIND_ADDRESS="${MICROSOCKS_BIND_ADDRESS:-}"
@@ -17,6 +19,7 @@ MICROSOCKS_OPTS="${MICROSOCKS_OPTS:-}"
 
 interface_name=""
 proxy_pid=""
+watchdog_pid=""
 runtime_awg_config=""
 
 prepare_runtime_config() {
@@ -51,6 +54,45 @@ apply_dns() {
     echo "[+] Applied DNS from config to /etc/resolv.conf"
 }
 
+restart_tunnel() {
+    echo "[watchdog] Restarting AmneziaWG interface: $interface_name"
+
+    awg-quick down "$runtime_awg_config" >/dev/null 2>&1 || true
+    sleep 2
+
+    if awg-quick up "$runtime_awg_config"; then
+        apply_dns
+        echo "[watchdog] Tunnel restart completed"
+        return 0
+    fi
+
+    echo "[watchdog] Failed to bring AWG back up" >&2
+    return 1
+}
+
+watchdog_awg() {
+    while true; do
+        sleep "$WATCHDOG_INTERVAL"
+
+        local handshake_ts
+        handshake_ts="$(awg show "$interface_name" latest-handshakes 2>/dev/null | awk '($2 + 0) > max { max = $2 + 0 } END { print max + 0 }')"
+
+        # If no handshake has been established yet, keep waiting.
+        [[ -z "$handshake_ts" || "$handshake_ts" -eq 0 ]] && continue
+
+        local now age
+        now="$(date +%s)"
+        age=$(( now - handshake_ts ))
+
+        (( age < 0 )) && continue
+
+        if (( age > WATCHDOG_STALE_THRESHOLD )); then
+            echo "[watchdog] Last handshake is stale (${age}s > ${WATCHDOG_STALE_THRESHOLD}s)"
+            restart_tunnel || true
+        fi
+    done
+}
+
 cleanup() {
     local exit_code=$?
 
@@ -59,6 +101,11 @@ cleanup() {
     if [[ -n "$proxy_pid" ]]; then
         kill "$proxy_pid" 2>/dev/null || true
         wait "$proxy_pid" 2>/dev/null || true
+    fi
+
+    if [[ -n "$watchdog_pid" ]]; then
+        kill "$watchdog_pid" 2>/dev/null || true
+        wait "$watchdog_pid" 2>/dev/null || true
     fi
 
     if [[ -n "$interface_name" ]]; then
@@ -99,12 +146,26 @@ interface_name="$(basename "$AWG_CONFIG_FILE" .conf)"
 export WG_QUICK_USERSPACE_IMPLEMENTATION
 export LOG_LEVEL
 
+if ! [[ "$WATCHDOG_INTERVAL" =~ ^[0-9]+$ ]] || (( WATCHDOG_INTERVAL < 1 )); then
+    echo "entrypoint.sh: WATCHDOG_INTERVAL must be a positive integer" >&2
+    exit 1
+fi
+
+if ! [[ "$WATCHDOG_STALE_THRESHOLD" =~ ^[0-9]+$ ]] || (( WATCHDOG_STALE_THRESHOLD < 1 )); then
+    echo "entrypoint.sh: WATCHDOG_STALE_THRESHOLD must be a positive integer" >&2
+    exit 1
+fi
+
 prepare_runtime_config
 
 echo "[+] Bringing up AmneziaWG interface: $interface_name"
 awg-quick up "$runtime_awg_config"
 
 apply_dns
+
+watchdog_awg &
+watchdog_pid=$!
+echo "[+] Watchdog enabled (interval=${WATCHDOG_INTERVAL}s, stale-threshold=${WATCHDOG_STALE_THRESHOLD}s)"
 
 echo "[+] Current interface state"
 awg show "$interface_name" || true

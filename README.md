@@ -65,6 +65,8 @@ Supported environment variables:
 - `AWG_CONFIG_FILE` (default `/config/amnezia.conf`)
 - `WG_QUICK_USERSPACE_IMPLEMENTATION` (default `amneziawg-go`)
 - `LOG_LEVEL` (default `info`)
+- `WATCHDOG_INTERVAL` (default `30`, seconds between AWG health checks)
+- `WATCHDOG_STALE_THRESHOLD` (default `180`, restart tunnel when latest handshake is older)
 - `PROXY_LISTEN_HOST` (default `0.0.0.0`)
 - `PROXY_PORT` (default `1080`)
 - `PROXY_USER`, `PROXY_PASSWORD` (optional auth, must be set together)
@@ -152,6 +154,11 @@ If direct and proxied public IP are identical, your host may already use the sam
 
 - Proxy port busy
   - Override host/container port via `PROXY_PORT`.
+
+- Proxy stops working after laptop sleep or network/location change
+  - Keep `PersistentKeepalive = 25` in AWG peer config.
+  - Current image runs an AWG watchdog that checks `latest-handshakes` and restarts the tunnel when stale.
+  - Tune with `WATCHDOG_INTERVAL` and `WATCHDOG_STALE_THRESHOLD` in compose if needed.
 
 - Container still shows `nameserver 127.0.0.11`
   - Wait until AWG startup completes (`docker compose logs --tail=120 awg-proxy`).
