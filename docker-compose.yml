@@ -17,6 +17,7 @@ services:
       LOG_LEVEL: info
       WATCHDOG_INTERVAL: "30"
       WATCHDOG_STALE_THRESHOLD: "180"
+      WATCHDOG_LOG_EVERY: "2"
       PROXY_LISTEN_HOST: 0.0.0.0
       PROXY_PORT: ${PROXY_PORT:-1080}
       # PROXY_USER: proxy

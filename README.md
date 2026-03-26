@@ -67,6 +67,7 @@ Supported environment variables:
 - `LOG_LEVEL` (default `info`)
 - `WATCHDOG_INTERVAL` (default `30`, seconds between AWG health checks)
 - `WATCHDOG_STALE_THRESHOLD` (default `180`, restart tunnel when latest handshake is older)
+- `WATCHDOG_LOG_EVERY` (default `2`, print watchdog health line every N checks)
 - `PROXY_LISTEN_HOST` (default `0.0.0.0`)
 - `PROXY_PORT` (default `1080`)
 - `PROXY_USER`, `PROXY_PASSWORD` (optional auth, must be set together)

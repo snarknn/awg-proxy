@@ -67,6 +67,7 @@ Compose публикует настраиваемый порт:
 - `LOG_LEVEL` (по умолчанию `info`)
 - `WATCHDOG_INTERVAL` (по умолчанию `30`, интервал проверки AWG в секундах)
 - `WATCHDOG_STALE_THRESHOLD` (по умолчанию `180`, перезапуск туннеля при устаревшем handshake)
+- `WATCHDOG_LOG_EVERY` (по умолчанию `2`, вывод health-лога watchdog каждые N проверок)
 - `PROXY_LISTEN_HOST` (по умолчанию `0.0.0.0`)
 - `PROXY_PORT` (по умолчанию `1080`)
 - `PROXY_USER`, `PROXY_PASSWORD` (опциональная авторизация, должны быть заданы вместе)

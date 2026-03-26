@@ -9,6 +9,7 @@ PROXY_LISTEN_HOST="${PROXY_LISTEN_HOST:-0.0.0.0}"
 PROXY_PORT="${PROXY_PORT:-1080}"
 WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-30}"
 WATCHDOG_STALE_THRESHOLD="${WATCHDOG_STALE_THRESHOLD:-180}"
+WATCHDOG_LOG_EVERY="${WATCHDOG_LOG_EVERY:-2}"
 PROXY_USER="${PROXY_USER:-}"
 PROXY_PASSWORD="${PROXY_PASSWORD:-}"
 MICROSOCKS_BIND_ADDRESS="${MICROSOCKS_BIND_ADDRESS:-}"
@@ -71,24 +72,58 @@ restart_tunnel() {
 }
 
 watchdog_awg() {
+    local check_count=0
+    local started_at
+    started_at="$(date +%s)"
+
+    echo "[watchdog] Loop started for interface '$interface_name'"
+
     while true; do
         sleep "$WATCHDOG_INTERVAL"
+        check_count=$(( check_count + 1 ))
 
         local handshake_ts
-        handshake_ts="$(awg show "$interface_name" latest-handshakes 2>/dev/null | awk '($2 + 0) > max { max = $2 + 0 } END { print max + 0 }')"
+        if ! handshake_ts="$(awg show "$interface_name" latest-handshakes 2>/dev/null | awk '($2 + 0) > max { max = $2 + 0 } END { print max + 0 }')"; then
+            echo "[watchdog] Failed to read latest-handshakes; attempting tunnel restart"
+            restart_tunnel || true
+            continue
+        fi
 
-        # If no handshake has been established yet, keep waiting.
-        [[ -z "$handshake_ts" || "$handshake_ts" -eq 0 ]] && continue
+        if [[ -z "$handshake_ts" || "$handshake_ts" -eq 0 ]]; then
+            local now_no_hs no_hs_age
+            now_no_hs="$(date +%s)"
+            no_hs_age=$(( now_no_hs - started_at ))
+
+            if (( check_count % WATCHDOG_LOG_EVERY == 0 )); then
+                echo "[watchdog] No handshake yet (age=${no_hs_age}s, threshold=${WATCHDOG_STALE_THRESHOLD}s)"
+            fi
+
+            if (( no_hs_age > WATCHDOG_STALE_THRESHOLD )); then
+                echo "[watchdog] No handshake for ${no_hs_age}s; restarting tunnel"
+                restart_tunnel || true
+                started_at="$(date +%s)"
+            fi
+
+            continue
+        fi
 
         local now age
         now="$(date +%s)"
         age=$(( now - handshake_ts ))
 
-        (( age < 0 )) && continue
+        if (( age < 0 )); then
+            echo "[watchdog] Skipping check due to negative handshake age (${age}s)"
+            continue
+        fi
+
+        if (( check_count % WATCHDOG_LOG_EVERY == 0 )); then
+            echo "[watchdog] Healthy check: latest handshake age=${age}s"
+        fi
 
         if (( age > WATCHDOG_STALE_THRESHOLD )); then
             echo "[watchdog] Last handshake is stale (${age}s > ${WATCHDOG_STALE_THRESHOLD}s)"
             restart_tunnel || true
+            started_at="$(date +%s)"
         fi
     done
 }
@@ -156,6 +191,11 @@ if ! [[ "$WATCHDOG_STALE_THRESHOLD" =~ ^[0-9]+$ ]] || (( WATCHDOG_STALE_THRESHOL
     exit 1
 fi
 
+if ! [[ "$WATCHDOG_LOG_EVERY" =~ ^[0-9]+$ ]] || (( WATCHDOG_LOG_EVERY < 1 )); then
+    echo "entrypoint.sh: WATCHDOG_LOG_EVERY must be a positive integer" >&2
+    exit 1
+fi
+
 prepare_runtime_config
 
 echo "[+] Bringing up AmneziaWG interface: $interface_name"
@@ -166,6 +206,7 @@ apply_dns
 watchdog_awg &
 watchdog_pid=$!
 echo "[+] Watchdog enabled (interval=${WATCHDOG_INTERVAL}s, stale-threshold=${WATCHDOG_STALE_THRESHOLD}s)"
+echo "[+] Watchdog logging cadence: every ${WATCHDOG_LOG_EVERY} checks"
 
 echo "[+] Current interface state"
 awg show "$interface_name" || true
