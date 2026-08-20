@@ -9,18 +9,15 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
-      - "127.0.0.1:${PROXY_PORT:-1080}:${PROXY_PORT:-1080}/tcp"
+      # Range for tunnel SOCKS5 ports. Exact ports are set in config/config.yml.
+      # IMPORTANT: ports in config/config.yml must fall within this range,
+      # but the container cannot verify this automatically.
+      - "127.0.0.1:1080-1099:1080-1099/tcp"
     volumes:
-      - ./amnezia.conf:/config/amnezia.conf:ro
+      - ./config:/config:ro
+      - ./config/config.yml:/config/config.yml:ro
     environment:
+      # Only Docker/infrastructure settings here.
+      # All app config (DNS, auth, watchdog, proxy) lives in config/config.yml.
       WG_QUICK_USERSPACE_IMPLEMENTATION: amneziawg-go
-      LOG_LEVEL: info
-      WATCHDOG_INTERVAL: "30"
-      WATCHDOG_STALE_THRESHOLD: "180"
-      WATCHDOG_LOG_EVERY: "2"
-      PROXY_LISTEN_HOST: 0.0.0.0
-      PROXY_PORT: ${PROXY_PORT:-1080}
-      # PROXY_USER: proxy
-      # PROXY_PASSWORD: change-me
-      # MICROSOCKS_WHITELIST: 192.168.1.0/24
     restart: unless-stopped

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG ALPINE_VERSION=3.20
-ARG GO_IMAGE=golang:1.24-alpine
+ARG GO_IMAGE=golang:1.25-alpine
 ARG AMNEZIAWG_GO_REF=master
 ARG AMNEZIAWG_TOOLS_REF=v1.0.20260223
 ARG MICROSOCKS_REF=v1.0.5
@@ -41,8 +41,16 @@ RUN make
 
 FROM alpine:${ALPINE_VERSION}
 
-RUN apk add --no-cache bash ca-certificates iproute2 iptables procps tini \
+ARG TARGETARCH
+ARG YQ_VERSION=v4.44.3
+
+RUN apk add --no-cache bash ca-certificates iproute2 iptables procps tini wget \
     && update-ca-certificates \
+    && YQ_URL="https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}" \
+    && echo "[+] Downloading yq from ${YQ_URL}" \
+    && wget --tries=3 --timeout=30 -O /usr/local/bin/yq "${YQ_URL}" \
+    && chmod +x /usr/local/bin/yq \
+    && apk del wget \
     && mkdir -p /config /etc/amnezia/amneziawg /var/run/amneziawg /dev/net
 
 RUN printf '#!/usr/bin/env sh\nfor arg in "$@"; do\n  case "$arg" in\n    -a) cat > /etc/resolv.conf; exit 0 ;;\n    -d) exit 0 ;;\n  esac\ndone\ncat >/dev/null 2>/dev/null\nexit 0\n' > /usr/local/bin/resolvconf \
@@ -56,6 +64,7 @@ COPY --from=build-microsocks /src/microsocks /usr/local/bin/microsocks
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
 RUN sed -i 's/cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1/cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1 || true/' /usr/local/bin/awg-quick \
+    && sed -i 's@cmd ip \$proto route add "\$1" dev "\$INTERFACE" table \$table@cmd ip \$proto route add "\$1" dev "\$INTERFACE" table \$table || [[ \$proto == -6 ]]@' /usr/local/bin/awg-quick \
     && chmod 0755 /usr/local/bin/amneziawg-go \
     /usr/local/bin/awg \
     /usr/local/bin/awg-quick \
@@ -63,14 +72,11 @@ RUN sed -i 's/cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1/cmd sysctl -q net
     /usr/local/bin/resolvconf \
     /usr/local/bin/entrypoint.sh
 
-ENV AWG_CONFIG_FILE=/config/amnezia.conf \
-    WG_QUICK_USERSPACE_IMPLEMENTATION=amneziawg-go \
+ENV WG_QUICK_USERSPACE_IMPLEMENTATION=amneziawg-go \
     LOG_LEVEL=info \
     PROXY_LISTEN_HOST=0.0.0.0 \
-    PROXY_PORT=1080
+    DNS_OVERRIDE=
 
 VOLUME ["/config"]
-
-EXPOSE 1080/tcp
 
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]

@@ -1,0 +1,59 @@
+# =============================================================================
+# AWG Proxy — Tunnel manifest (single source of truth)
+# =============================================================================
+#
+# Copy this file to config.yml and edit with your real values.
+#   cp config.yml.example config.yml
+#
+# config.yml is gitignored — it stays local.
+#
+# Config files are resolved from /config/ (mounted from ./config in compose).
+#
+# Config resolution order:
+#   1. If "config" is set with .conf extension → /config/<value>
+#   2. If "config" is set without .conf → try /config/<value>, then /config/<value>.conf
+#   3. If "config" is omitted → /config/<name>.conf
+#
+# ⚠️  All ports MUST fall within the range published in docker-compose.yml.
+#     The container cannot verify this — it is a manual check.
+
+# -----------------------------------------------------------------------------
+# Global settings
+# -----------------------------------------------------------------------------
+# These override the corresponding environment variables.
+# If a setting is omitted here, the env-var default is used.
+
+global:
+  # Logging: debug | info | warn | error
+  # log_level: info
+
+  # DNS (space-separated list). Overrides per-config DNS in /etc/resolv.conf.
+  # Leave empty to merge DNS from all configs (union).
+  # dns_override: "1.1.1.1 8.8.8.8"
+
+  # SOCKS5 proxy
+  # proxy_listen_host: 0.0.0.0
+  # proxy_user: myuser
+  # proxy_password: changeme
+  # whitelist: 192.168.0.0/16
+
+  # Watchdog (checks AWG handshake health)
+  # watchdog_interval: 30       # seconds between checks
+  # watchdog_stale_threshold: 180  # restart if no handshake for this long
+  # watchdog_log_every: 2       # log every N-th check cycle
+
+# -----------------------------------------------------------------------------
+# Tunnels
+# -----------------------------------------------------------------------------
+
+tunnels:
+  - name: us-east
+    port: 1080
+
+  - name: eu-west
+    port: 1081
+    config: eu-west.conf
+
+  - name: asia-tokyo
+    port: 1082
+    config: tokyo.conf

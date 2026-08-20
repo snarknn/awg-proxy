@@ -1,1 +1,4 @@
-amnezia.conf
+# Real VPN configs (private keys, real endpoints)
+config/*
+!config/**/*.example
+**/*.conf
