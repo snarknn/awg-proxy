@@ -141,6 +141,7 @@ tunnels:
 |-------|---------|-------------|
 | `log_level` | `info` | Logging level (`debug`, `info`, `warn`, `error`) |
 | `dns_override` | *(empty)* | Space-separated DNS servers, overrides all config DNS |
+| `dns_via_tunnel` | `true` | Route DNS queries through tunnels (anti-hijack). Set `false` to use plain DNS via default route (e.g. for LAN resolvers) |
 | `proxy_listen_host` | `0.0.0.0` | microsocks bind address |
 | `proxy_user` | *(empty)* | SOCKS5 auth username (requires `proxy_password`) |
 | `proxy_password` | *(empty)* | SOCKS5 auth password (requires `proxy_user`) |
@@ -185,6 +186,8 @@ All application settings are configured via `config/config.yml` (see [Global set
 
 - All unique `DNS` entries from all configs are merged into `/etc/resolv.conf` (union).
 - Set `dns_override` in `config/config.yml` `global:` section to override with custom DNS servers.
+- **DNS anti-hijack (enabled by default):** DNS queries from microsocks are policy-routed through the tunnels to prevent ISP/TSPU DNS poisoning. Each nameserver is assigned round-robin to a started tunnel with `ip rule add to <ns> lookup <table>` + iptables SNAT to the AWG interface IP.
+- Set `dns_via_tunnel: false` in `global:` to disable this and let DNS leave via the default route (e.g. for LAN resolvers like Pi-hole/AdGuard).
 - For per-tunnel DNS isolation, see the troubleshooting section.
 
 ### Port mapping
@@ -299,6 +302,12 @@ If direct and proxied public IP are identical, your host may already use the sam
 - Duplicate port error
   - Each tunnel must use a unique port in `config/config.yml`.
 
+- **Duplicate internal IP (Amnezia default subnet 10.8.1.0/24)**
+  - AmneziaWG installer always uses subnet `10.8.1.0/24` and assigns IPs sequentially (`.2`, `.3`, `.4`...).
+  - If multiple servers use defaults, tunnels will have colliding internal IPs (e.g. two tunnels with `10.8.1.2`).
+  - **Behavior:** The container detects this at startup, logs a warning, and **skips the later tunnel(s)** while starting the others.
+  - **Fix:** On the server (Amnezia Web UI or CLI), change the peer's `AllowedIPs` to a free IP in the same subnet (e.g. `10.8.1.50/32`). In the client `.conf`, change `Address` to match (e.g. `Address = 10.8.1.50/24`). Restart the container.
+
 - Proxy port unreachable from host
   - Ensure the port from `config/config.yml` falls within the range published in `docker-compose.yml`.
   - The container cannot validate this — it is a manual check.
@@ -316,6 +325,8 @@ If direct and proxied public IP are identical, your host may already use the sam
 - Per-tunnel DNS isolation needed
   - Default behavior uses union DNS for all tunnels.
   - Set `dns_override` in `config/config.yml` `global:` section to use custom DNS servers globally.
+  - **DNS anti-hijack is enabled by default** (`dns_via_tunnel: true`). DNS queries are routed through tunnels to prevent poisoning.
+  - Set `dns_via_tunnel: false` in `global:` to disable and use plain DNS via default route (e.g. for LAN resolvers like Pi-hole/AdGuard).
   - For full per-tunnel DNS isolation, use network namespaces (requires `SYS_ADMIN` capability).
 
 ## Files

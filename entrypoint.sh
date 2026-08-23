@@ -9,6 +9,7 @@ WG_QUICK_USERSPACE_IMPLEMENTATION="${WG_QUICK_USERSPACE_IMPLEMENTATION:-amneziaw
 LOG_LEVEL="${LOG_LEVEL:-info}"
 PROXY_LISTEN_HOST="${PROXY_LISTEN_HOST:-0.0.0.0}"
 DNS_OVERRIDE="${DNS_OVERRIDE:-}"
+DNS_VIA_TUNNEL="${DNS_VIA_TUNNEL:-true}"
 WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-30}"
 WATCHDOG_STALE_THRESHOLD="${WATCHDOG_STALE_THRESHOLD:-180}"
 WATCHDOG_LOG_EVERY="${WATCHDOG_LOG_EVERY:-2}"
@@ -140,6 +141,9 @@ load_global_config() {
     val="$(yq '.global.dns_override // ""' "$TUNNELS_YAML" 2>/dev/null)"
     [[ -n "$val" ]] && DNS_OVERRIDE="$val"
 
+    val="$(yq '.global.dns_via_tunnel // ""' "$TUNNELS_YAML" 2>/dev/null)"
+    [[ -n "$val" ]] && DNS_VIA_TUNNEL="$val"
+
     val="$(yq '.global.proxy_listen_host // ""' "$TUNNELS_YAML" 2>/dev/null)"
     [[ -n "$val" ]] && PROXY_LISTEN_HOST="$val"
 
@@ -252,14 +256,48 @@ discover_tunnels() {
         seen_names+=("$name")
     done
 
+    # Check for duplicate internal IPs (common with default Amnezia subnet 10.8.1.0/24)
+    # If duplicates found, skip the LATER tunnel(s) but continue with others.
+    local -a seen_ips=()
+    local -a skip_indexes=()
     for (( i=0; i<${#tmp_names[@]}; i++ )); do
+        local duplicate=0
+        for entry in "${seen_ips[@]:-}"; do
+            local existing_ip="${entry%%|*}"
+            local existing_name="${entry#*|}"
+            if [[ "${tmp_ips[$i]}" == "$existing_ip" ]]; then
+                echo "[!] WARNING: tunnels '$existing_name' and '${tmp_names[$i]}' share internal IP ${tmp_ips[$i]}" >&2
+                echo "    Source-based routing would misroute traffic from '$existing_name' through '${tmp_names[$i]}'." >&2
+                echo "    Skipping tunnel '${tmp_names[$i]}' (port ${tmp_ports[$i]})." >&2
+                echo "    Fix: re-address one tunnel on its server (peer AllowedIPs + client Address)." >&2
+                duplicate=1
+                break
+            fi
+        done
+        if (( duplicate == 1 )); then
+            skip_indexes+=( "$i" )
+        else
+            seen_ips+=("${tmp_ips[$i]}|${tmp_names[$i]}")
+        fi
+    done
+
+    for (( i=0; i<${#tmp_names[@]}; i++ )); do
+        # Skip tunnels with duplicate IPs
+        local skip=0
+        for si in "${skip_indexes[@]:-}"; do
+            if [[ "$i" == "$si" ]]; then
+                skip=1
+                break
+            fi
+        done
+        (( skip == 1 )) && continue
+
         TUNNEL_NAMES+=("${tmp_names[$i]}")
         TUNNEL_PORTS+=("${tmp_ports[$i]}")
         TUNNEL_IPS+=("${tmp_ips[$i]}")
-        TUNNEL_TABLE_IDS+=( $(( 100 + i )) )
+        TUNNEL_TABLE_IDS+=( $(( 100 + ${#TUNNEL_NAMES[@]} - 1 )) )
         TUNNEL_CONFIGS+=("${tmp_configs[$i]}")
     done
-
     echo "[+] Tunnel map:"
     for (( i=0; i<${#TUNNEL_NAMES[@]}; i++ )); do
         echo "    ${TUNNEL_NAMES[$i]} → ${TUNNEL_CONFIGS[$i]##*/} → ${TUNNEL_IPS[$i]}:${TUNNEL_PORTS[$i]} (table ${TUNNEL_TABLE_IDS[$i]})"
@@ -387,6 +425,137 @@ remove_source_routing() {
 
     ip rule del from "$ip" lookup "$table_id" 2>/dev/null || true
     ip route del default dev "$iface" table "$table_id" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# DNS routing (anti-hijack)
+# ---------------------------------------------------------------------------
+# DNS queries made by processes inside this container (microsocks resolving
+# hostnames for SOCKS5 clients) leave via the default route — the docker
+# bridge — NOT via the tunnels. On censored networks plaintext DNS is
+# intercepted and poisoned: blocked domains resolve to block-page IPs, and
+# browsers then receive certificates for the wrong domain
+# (net::ERR_CERT_COMMON_NAME_INVALID).
+#
+# Fix: policy-route every configured resolver through a tunnel and rewrite
+# the query source to the AWG interface address so the VPN server accepts
+# and NATs the query even when its peer config only allows assigned IPs.
+# Nameservers are distributed round-robin across started tunnels.
+
+DNS_RULE_PRIORITY="${DNS_RULE_PRIORITY:-5000}"
+
+declare -a STARTED_INDEXES=()
+declare -a DNS_SERVERS_V4=()
+declare -a DNS_RULE_TARGETS=()
+declare -a DNS_RULE_TABLES=()
+declare -a DNS_NAT_TARGETS=()
+declare -a DNS_NAT_IFACES=()
+declare -a DNS_NAT_SOURCES=()
+
+collect_dns_servers() {
+    DNS_SERVERS_V4=()
+
+    local -a raw=()
+    if [[ -n "$DNS_OVERRIDE" ]]; then
+        read -r -a raw <<< "$DNS_OVERRIDE"
+    else
+        local line ns
+        while IFS= read -r line; do
+            [[ "$line" != nameserver* ]] && continue
+            ns="${line#nameserver }"
+            [[ -n "$ns" ]] && raw+=( "$ns" )
+        done < /etc/resolv.conf
+    fi
+
+    local s existing found
+    for s in "${raw[@]:-}"; do
+        if ! [[ "$s" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "[!] Skipping non-IPv4 DNS server '$s' (only IPv4 is policy-routed)" >&2
+            continue
+        fi
+
+        found=0
+        for existing in "${DNS_SERVERS_V4[@]:-}"; do
+            if [[ "$existing" == "$s" ]]; then found=1; break; fi
+        done
+        (( found == 1 )) && continue
+
+        DNS_SERVERS_V4+=( "$s" )
+    done
+}
+
+setup_dns_routing() {
+    # Respect user choice to disable DNS via tunnel
+    if [[ "$DNS_VIA_TUNNEL" != "true" ]]; then
+        echo "[+] DNS via tunnel disabled (dns_via_tunnel=false); queries leave via default route"
+        return 0
+    fi
+
+    collect_dns_servers
+
+    if (( ${#DNS_SERVERS_V4[@]} == 0 )); then
+        echo "[!] No IPv4 DNS servers found; DNS will leave via the default route (prone to hijacking)" >&2
+        return 0
+    fi
+
+    if (( ${#STARTED_INDEXES[@]} == 0 )); then
+        echo "[!] No tunnels started; cannot route DNS through a tunnel" >&2
+        return 0
+    fi
+
+    local have_iptables=0
+    if command -v iptables >/dev/null 2>&1; then
+        have_iptables=1
+    else
+        echo "[!] iptables not available; DNS queries will keep their bridge source address" >&2
+    fi
+
+    local count=${#STARTED_INDEXES[@]}
+    local n=0
+    local ns idx table_id iface awg_ip
+
+    for ns in "${DNS_SERVERS_V4[@]}"; do
+        idx="${STARTED_INDEXES[$(( n % count ))]}"
+        table_id="${TUNNEL_TABLE_IDS[$idx]}"
+        iface="${TUNNEL_NAMES[$idx]}"
+        awg_ip="${TUNNEL_IPS[$idx]}"
+
+        # Steer packets addressed to this resolver into the tunnel.
+        if ip rule add to "$ns" lookup "$table_id" priority "$DNS_RULE_PRIORITY" 2>/dev/null; then
+            DNS_RULE_TARGETS+=( "$ns" )
+            DNS_RULE_TABLES+=( "$table_id" )
+            echo "[+] DNS routing: $ns → $iface (table $table_id)"
+        else
+            echo "[!] Could not add ip rule for DNS $ns → table $table_id" >&2
+        fi
+
+        # Rewrite the query source to the AWG IP so the server accepts it even
+        # when its peer config only allows the assigned VPN address.
+        if (( have_iptables == 1 )); then
+            if iptables -t nat -C POSTROUTING -d "$ns/32" -o "$iface" -j SNAT --to-source "$awg_ip" 2>/dev/null \
+                || iptables -t nat -A POSTROUTING -d "$ns/32" -o "$iface" -j SNAT --to-source "$awg_ip" 2>/dev/null; then
+                DNS_NAT_TARGETS+=( "$ns" )
+                DNS_NAT_IFACES+=( "$iface" )
+                DNS_NAT_SOURCES+=( "$awg_ip" )
+                echo "[+] DNS SNAT: queries to $ns exit as $awg_ip via $iface"
+            else
+                echo "[!] Could not add SNAT rule for DNS $ns via $iface" >&2
+            fi
+        fi
+
+        n=$(( n + 1 ))
+    done
+}
+
+remove_dns_routing() {
+    local i
+    for (( i=0; i<${#DNS_RULE_TARGETS[@]}; i++ )); do
+        ip rule del to "${DNS_RULE_TARGETS[$i]}" lookup "${DNS_RULE_TABLES[$i]}" priority "$DNS_RULE_PRIORITY" 2>/dev/null || true
+    done
+
+    for (( i=0; i<${#DNS_NAT_TARGETS[@]}; i++ )); do
+        iptables -t nat -D POSTROUTING -d "${DNS_NAT_TARGETS[$i]}/32" -o "${DNS_NAT_IFACES[$i]}" -j SNAT --to-source "${DNS_NAT_SOURCES[$i]}" 2>/dev/null || true
+    done
 }
 
 # ---------------------------------------------------------------------------
@@ -626,6 +795,8 @@ cleanup() {
         wait "$pid" 2>/dev/null || true
     done
 
+    remove_dns_routing
+
     for (( i=0; i<${#TUNNEL_NAMES[@]}; i++ )); do
         remove_source_routing "${TUNNEL_IPS[$i]}" "${TUNNEL_NAMES[$i]}" "${TUNNEL_TABLE_IDS[$i]}"
     done
@@ -692,6 +863,7 @@ main() {
     for (( i=0; i<${#TUNNEL_NAMES[@]}; i++ )); do
         if start_tunnel "$i"; then
             started=$(( started + 1 ))
+            STARTED_INDEXES+=( "$i" )
         fi
     done
 
@@ -699,6 +871,8 @@ main() {
         echo "entrypoint.sh: no tunnels started successfully" >&2
         exit 1
     fi
+
+    setup_dns_routing
 
     echo ""
     echo "[+] All tunnels started. Active: ${started}/${#TUNNEL_NAMES[@]}"

@@ -29,7 +29,12 @@ global:
 
   # DNS (space-separated list). Overrides per-config DNS in /etc/resolv.conf.
   # Leave empty to merge DNS from all configs (union).
+  # DNS queries are routed through the tunnels (anti-hijack) by default;
+  # each nameserver is assigned round-robin to one of the started tunnels.
+  # Set dns_via_tunnel: false to disable and use plain DNS via default route
+  # (e.g. for LAN resolvers like Pi-hole/AdGuard).
   # dns_override: "1.1.1.1 8.8.8.8"
+  # dns_via_tunnel: true
 
   # SOCKS5 proxy
   # proxy_listen_host: 0.0.0.0

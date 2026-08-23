@@ -19,6 +19,8 @@ Main runtime path:
 - AWG tools: `awg`, `awg-quick`
 - Proxy: `microsocks` (one instance per tunnel, bound to AWG interface IP via `-b`)
 - Routing: source-based routing via `ip rule add from <IP> lookup <table>` + `ip route add default dev <iface> table <N>`
+- DNS anti-hijack: destination-based rules `ip rule add to <dns> lookup <table>` + iptables SNAT to the AWG IP send resolver queries through tunnels (nameservers distributed round-robin across started tunnels). Without this, DNS leaves via the docker bridge and censored networks poison it → browsers get `ERR_CERT_COMMON_NAME_INVALID`. Controlled by `dns_via_tunnel` in `global:` (default `true`).
+- IP collision handling: Amnezia defaults to `10.8.1.0/24`; duplicate internal IPs detected at startup, later tunnels skipped with warning. Fix requires server-side `AllowedIPs` + client `Address` change.
 - Init process: `tini`
 
 ## Known design decisions
@@ -42,6 +44,7 @@ Main runtime path:
 4. DNS strategy
 - All unique DNS entries from all configs are merged into `/etc/resolv.conf` (union).
 - `dns_override` in `config.yml` `global:` section can override with custom DNS servers.
+- `dns_via_tunnel` in `config.yml` `global:` section (default `true`) controls DNS anti-hijack. When `true`, DNS queries are policy-routed through tunnels with SNAT to AWG IP. Set `false` to use plain DNS via default route (e.g. for LAN resolvers).
 - Per-tunnel DNS isolation requires network namespaces (needs `SYS_ADMIN`).
 
 5. Desktop sysctl tolerance
@@ -101,3 +104,4 @@ Note:
 - `config/config.yml` is gitignored (real config). `config/config.yml.example` is safe to commit (fictional data).
 - `config/` directory is gitignored (real credentials). `amnezia.conf.example` is safe to commit.
 - All application settings (DNS, auth, watchdog, proxy) live in `config.yml` `global:` section, not in docker-compose environment.
+- **IP collision handling:** Amnezia defaults to `10.8.1.0/24`. Duplicate internal IPs detected at startup — later tunnels skipped with warning. User must re-address on server (peer `AllowedIPs`) and client (`Address`).

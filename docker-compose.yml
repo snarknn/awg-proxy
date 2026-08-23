@@ -12,7 +12,7 @@ services:
       # Range for tunnel SOCKS5 ports. Exact ports are set in config/config.yml.
       # IMPORTANT: ports in config/config.yml must fall within this range,
       # but the container cannot verify this automatically.
-      - "127.0.0.1:1080-1099:1080-1099/tcp"
+      - "127.0.0.1:1080-1084:1080-1084/tcp"
     volumes:
       - ./config:/config:ro
       - ./config/config.yml:/config/config.yml:ro
