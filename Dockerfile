@@ -2,8 +2,15 @@
 
 ARG ALPINE_VERSION=3.20
 ARG GO_IMAGE=golang:1.25-alpine
+# master = AmneziaWG 3.x code line (Go module .../amneziawg-go/v3).
+# Supports the AWG 3 protocol extensions (header protection, content padding,
+# timings, I1-I5 signature packets). New params are opt-in, so this stays
+# backward compatible with pre-3.x servers.
 ARG AMNEZIAWG_GO_REF=master
-ARG AMNEZIAWG_TOOLS_REF=v1.0.20260223
+# Pinned tools matching the AWG 3.x go implementation (released 2026-08-12).
+# The awg/awg-quick binaries must be from the same major line as amneziawg-go:
+# older v1.0.x tools cannot parse/set the new AWG 3 config parameters.
+ARG AMNEZIAWG_TOOLS_REF=v3.1.20260812
 ARG MICROSOCKS_REF=v1.0.5
 
 FROM ${GO_IMAGE} AS build-amneziawg-go
@@ -63,7 +70,14 @@ COPY --from=build-amneziawg-tools /out/etc/amnezia/amneziawg /etc/amnezia/amnezi
 COPY --from=build-microsocks /src/microsocks /usr/local/bin/microsocks
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
-RUN sed -i 's/cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1/cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1 || true/' /usr/local/bin/awg-quick \
+# Patch awg-quick for Docker Desktop tolerance. The grep guards make the build
+# fail loudly if amneziawg-tools changes these lines, instead of sed silently
+# applying no patch (sed exits 0 on unmatched patterns).
+RUN grep -qF 'cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1' /usr/local/bin/awg-quick \
+    || { echo 'FATAL: awg-quick patch anchor #1 (src_valid_mark) not found - amneziawg-tools layout changed?'; exit 1; } \
+    && grep -qF 'cmd ip $proto route add "$1" dev "$INTERFACE" table $table' /usr/local/bin/awg-quick \
+    || { echo 'FATAL: awg-quick patch anchor #2 (route add table) not found - amneziawg-tools layout changed?'; exit 1; } \
+    && sed -i 's/cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1/cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1 || true/' /usr/local/bin/awg-quick \
     && sed -i 's@cmd ip \$proto route add "\$1" dev "\$INTERFACE" table \$table@cmd ip \$proto route add "\$1" dev "\$INTERFACE" table \$table || [[ \$proto == -6 ]]@' /usr/local/bin/awg-quick \
     && chmod 0755 /usr/local/bin/amneziawg-go \
     /usr/local/bin/awg \

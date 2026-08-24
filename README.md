@@ -19,10 +19,19 @@ This project is designed to work on Windows Docker Desktop and Linux.
 ## What is included
 
 - Base image: Alpine (portable variant)
-- AWG userspace backend: `amneziawg-go`
-- AWG tooling: `awg`, `awg-quick`
+- AWG userspace backend: `amneziawg-go` (AWG 3.x code line, built from `master`)
+- AWG tooling: `awg`, `awg-quick` (pinned `v3.1.20260812`)
 - Proxy: `microsocks`
 - Entrypoint orchestration: `entrypoint.sh`
+
+> **ℹ️ AmneziaWG 3.x protocol support:** the image ships the AWG 3.x
+> implementation (`amneziawg-go` v3 + tools `v3.1.20260812`). New protocol
+> parameters — header protection (`HeaderProtectionKey`), content padding
+> addition, custom timings (`RekeyAfterTime`, `RekeyTimeout`, ...),
+> `RandomTrailers`, `DisableCookies`, ranged `H1-H4`, tagged signature packets
+> `I1-I5` — are all **opt-in**: absent parameters mean "off", so tunnels keep
+> working against pre-3.x servers unchanged. See commented examples in
+> [`amnezia.conf.example`](amnezia.conf.example).
 
 ## Requirements
 

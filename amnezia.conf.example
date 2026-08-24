@@ -19,6 +19,28 @@ I3 =
 I4 =
 I5 =
 
+# --- AmneziaWG 3.x options (optional) -------------------------------------
+# Requires AWG 3.x on BOTH sides (this image ships amneziawg-go v3 + tools
+# v3.1.20260812). All params below are opt-in: absent = off, which keeps the
+# tunnel fully compatible with pre-3.x servers.
+#
+# HeaderProtectionKey = <BASE64_32BYTE_KEY>  # encrypts packet type headers
+# ContentPaddingAddition = 10-20             # extra transport padding, range
+# RekeyAfterTime = 120-130                   # seconds before re-handshake
+# RekeyTimeout = 5                           # handshake retry timeout, seconds
+# RejectAfterTime = 180                      # hard session expiry, seconds
+# KeepaliveTimeout = 10                      # keepalive interval, seconds
+# MaxHandshakeAttempts = 70                  # handshake retry attempts
+# RandomTrailers = true                      # random bytes appended to packets
+# DisableCookies = false                     # disable cookie replies under load
+#
+# Since AWG 3: H1-H4 accept ranges too — e.g. H1 = 123456-123500
+# I1-I5 accept tag sequences:
+#   <b 0xAABBCC>  static hex bytes     <r N>   N random bytes
+#   <rd N>        N random digits      <rc N>  N random letters [a-zA-Z]
+#   <t>           current unix timestamp (4 bytes)
+# Example: I1 = <b 0x160303><r 40>
+
 [Peer]
 PublicKey = <SERVER_PUBLIC_KEY>
 PresharedKey = <PRESHARED_KEY>

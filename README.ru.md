@@ -19,10 +19,19 @@ English version: [README.md](README.md)
 ## Что входит в состав
 
 - Базовый образ: Alpine (portable-вариант)
-- Userspace-бэкенд AWG: `amneziawg-go`
-- Инструменты AWG: `awg`, `awg-quick`
+- Userspace-бэкенд AWG: `amneziawg-go` (линейка AWG 3.x, собирается из `master`)
+- Инструменты AWG: `awg`, `awg-quick` (закреплены на `v3.1.20260812`)
 - Прокси: `microsocks`
 - Оркестрация запуска: `entrypoint.sh`
+
+> **ℹ️ Поддержка протокола AmneziaWG 3.x:** образ содержит реализацию AWG 3.x
+> (`amneziawg-go` v3 + tools `v3.1.20260812`). Новые параметры протокола —
+> защита заголовков (`HeaderProtectionKey`), content padding addition,
+> кастомные тайминги (`RekeyAfterTime`, `RekeyTimeout`, ...), `RandomTrailers`,
+> `DisableCookies`, диапазонные `H1-H4`, сигнатурные пакеты `I1-I5` с тегами —
+> все **опциональны**: отсутствие параметра означает «выключено», поэтому
+> туннели продолжают работать со старыми (до-3.x) серверами без изменений.
+> Закомментированные примеры — в [`amnezia.conf.example`](amnezia.conf.example).
 
 ## Требования
 
